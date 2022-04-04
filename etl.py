@@ -70,10 +70,20 @@ def process_log_data(spark, input_data, output_data):
     
     # create datetime column from original timestamp column
     get_datetime = udf(lambda ts: datetime.utcfromtimestamp(int64(ts) // 1000000000)) 
-    df = df.withColumn('timestamp', get_datetime('ts'))
-    
+
+    df.createOrGetTempView('logs')
     # extract columns to create time table
-    time_table = 
+    time_table = spark.sql('''
+        SELECT 
+            distinct timestamp as start_time, 
+            EXTRACT(start_time, 'hour'), 
+            EXTRACT(start_time, 'day'), 
+            EXTRACT(start_time, 'week'), 
+            EXTRACT(start_time, 'month'), 
+            EXTRACT(start_time, 'year'), 
+            EXTRACT(start_time, 'weekday')
+        FROM logs
+    ''')
     
     # write time table to parquet files partitioned by year and month
     time_table.write.option(header=True).partitionBy('year', 'month').mode('overwrite').parquet()
@@ -83,7 +93,7 @@ def process_log_data(spark, input_data, output_data):
 
     # extract columns from joined song and log datasets to create songplays table 
     songplays_table = 
-    
+
     # write songplays table to parquet files partitioned by year and month
     songplays_table.write.option(header=True).partitionBy('year', 'month').mode('overwrite').parquet()
 
