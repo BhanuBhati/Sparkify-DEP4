@@ -13,23 +13,24 @@ config.read('dl.cfg')
 os.environ['AWS_ACCESS_KEY_ID']=config['default']['AWS_ACCESS_KEY_ID']
 os.environ['AWS_SECRET_ACCESS_KEY']=config['default']['AWS_SECRET_ACCESS_KEY']
 
-'''
-This function creates and returns a spark session
-'''
+
 def create_spark_session():
+    '''
+    This function creates and returns a spark session
+    '''
     spark = SparkSession.builder.config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:2.7.0").getOrCreate()
     return spark
 
-'''
-This function processes song data by:
-1) Reading the JSON data from S3
-2) Extracts columns for songs and artist tables
-3) Saving the tables in parquet files in S3 Bucket
 
-The arguments include the spark session object, the input S3 path and output S3 path
-'''
 def process_song_data(spark, input_data, output_data):
+    '''
+    This function processes song data by:
+    1) Reading the JSON data from S3
+    2) Extracts columns for songs and artist tables
+    3) Saving the tables in parquet files in S3 Bucket
 
+    The arguments include the spark session object, the input S3 path and output S3 path
+    '''
     song_data = input_data+'song_data/*/*/*.json'
     df = spark.read.json(song_data)
 
@@ -55,17 +56,17 @@ def process_song_data(spark, input_data, output_data):
         .parquet(output_data+'artists/')
 
 
-'''
-This function processes logs data by:
-1) Reading the JSON log data from S3
-2) Extracts columns for users, time
-3) Loading previously saved songs_data from S3 and joining it with log data to get songs_play table
-3) Saving the tables in parquet files in S3 Bucket
 
-The arguments include the spark session object, the input S3 path and output S3 path
-'''
 def process_log_data(spark, input_data, output_data):
+    '''
+    This function processes logs data by:
+    1) Reading the JSON log data from S3
+    2) Extracts columns for users, time
+    3) Loading previously saved songs_data from S3 and joining it with log data to get songs_play table
+    3) Saving the tables in parquet files in S3 Bucket
 
+    The arguments include the spark session object, the input S3 path and output S3 path
+    '''
     log_data = input_data+'log_data/'
     df = spark.read.json(log_data)
     df = df.where(df.page == 'NextSong')
@@ -75,7 +76,7 @@ def process_log_data(spark, input_data, output_data):
                            col('firstName').alias('first_name'), 
                            col('lastName').alias('last_name'), 
                            'gender', 
-                           'level').sort(desc('ts')).distinct()
+                           'level').sort(desc('ts')).drop_duplicates(subset=['userId'])
 
     user_table \
         .write. \
@@ -127,11 +128,12 @@ def process_log_data(spark, input_data, output_data):
         .parquet(output_data+'songplay/')
     
 
-'''
-The main function contains the values for input and output S3 paths
-Calls process_song_data and process_log_data methods
-'''
+
 def main():
+    '''
+    The main function contains the values for input and output S3 paths
+    Calls process_song_data and process_log_data methods
+    '''
     spark = create_spark_session()
     input_data = "s3://udacity-dend/"
     output_data = "s3://sparkify-dlake/data/"
