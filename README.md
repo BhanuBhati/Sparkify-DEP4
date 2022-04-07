@@ -2,9 +2,11 @@
 
 ## Introduction
 
+
 A music streaming startup, Sparkify, has grown their user base and song database even more and want to move their data warehouse to a data lake. Their data resides in S3, in a directory of JSON logs on user activity on the app, as well as a directory with JSON metadata on the songs in their app.
 
 We are building an ETL pipeline that extracts their data from S3, processes them using Spark, and loads the data back into S3 as a set of dimensional tables. This will allow their analytics team to continue finding insights in what songs their users are listening to.
+
 ----
 
 ## The Datasets
@@ -45,149 +47,71 @@ And below is an example of what the data in a log file, 2018-11-12-events.json, 
 
 We are going to create a star schema optimized for queries on song play analysis. This includes the following tables: 
 
-### Staging Tables
-
-1. **staging_events** - Stores the log data loaded from S3 Bucket. 
-    - We are using ts (timestamp) as the SORTKEY. 
-
-2. **staging_songs** - Stores the song data loaded from S3 Bucket. 
-    - We are using year as the SORTKEY. 
-
 ### Fact Table
 
 1. **songplays** - records in log data associated with song plays i.e. records with page *NextSong*
-    - Using start time as both DISTKEY and SORTKEY.
+    - This table will be stored in parquet files partitioned by year and month of record.
 
 ### Dimension Tables
 
 1. **users** - users in the app
-    - This table will be small enough. We will be distributing it on ALL nodes.
+    - This table will be stored as parquet files.
+
         
 2. **songs** - songs in music database
-    - This table will be small enough. We will be distributing it on ALL nodes.
+    - This table will be partioned by year and artist_id and will be stored as parquet files.
 
 3. **artists** - artists in music database
-    - This table will be small enough. We will be distributing it on ALL nodes.
+    - This table will be stored as parquet files.
 
 4. **time** - timestamps of records in songplays broken down into specific units
-    - This table will be small enough. We will be distributing it on ALL nodes.
+    - This table will be stored as parquet files partioned by year and month.
 
 ----
 ## Project Files
 
 The project includes four files:
 
-1. `create_table.py` is where we are creating fact and dimension tables for the star schema in Redshift.
-2. `etl.py` is where we are loading data from S3 into staging tables on Redshift and then processing that data into your analytics tables on Redshift.
-3. `sql_queries.py` is where we are defining SQL statements, which will be imported into the two other files above.
-4. `README.md` for process and decisions of ETL pipeline.  
-5. `dwh.cfg` containing AWS credentials and S3 Bucket locations.
+1. `etl.py` reads data from S3, processes that data using Spark, and writes them back to S3
+2. `dl.cfg` contains AWS credentials
+3. `README.md` documents process and decisions
 
 # ETL Process
 
-## Creating IAM Role, Sucurity Group and Redshift Cluster.
-- First creating an IAM Role with `AmazonS3ReadOnlyAccess` permission and Storing the Roles ARN in `dwh.cfg`. This is necessary for RedShift to be able to read S3 Bucket content.
-- Then, creating a Security Group under EC2 > Network and Security and adding Inbound rule to allow all traffic from out current IP.
-- Creating a Redshift Cluster. Upon successful creation, we are going to enable `Publicly accessible` under Cluster Network and Security Settings. 
-- Then, adding the IAM Role created above to the cluster and changing default VPC to the security group created above. 
-- Saving HOST, database name, username and password in `dwh.cfg`.
+## Step 1: Configure EMR cluster with the following settings:
+* Release: `emr-5.20.0` or later
+* Applications: `Spark: Spark 2.4.0` on Hadoop 2.8.5 YARN with Ganglia 3.7.2 and Zeppelin 0.8.0
+* Instance type: `m3.xlarge`
+* Number of instance: `3`
+* EC2 key pair: `Proceed without an EC2 key pair` (Can also provide key-pair)
+* Keep the remaining default setting and click "Create cluster" on the bottom right.
+* Wait for the status of cluster to change from `Starting` to `Waiting`.
 
-## Creating Tables
+## Step 2: Create Notebook
+* Cluster has been launched successfully, create a notebook to run Spark on the cluster.
+* Select "Notebooks" in the menu on the left, and click the "Create notebook" button.
+* Enter a name for your notebook
+* Select `"Choose an existing cluster"` and choose the cluster you just created
+* Use the default setting for `"AWS service role"` - this should be `"EMR_Notebooks_DefaultRole"` or `"Create default role"`.
+* Keep the remaining default settings and click "Create notebook" on the bottom right.
+* Wait for Notebook "Ready" Status, Then Open
+* Once you create an EMR notebook, wait a short time before the notebook status changes from `Starting` or `Pending` to `Ready`. Once your notebook status is Ready, click the "Open" button to open the notebook.
 
-- Stating the DROP and CREATE statements in sql_queries.py
-- Calling create_tables.py after this to drop all the tables first and create fresh ones. This process can be repeated multiple times while developing the database.
+The notebook is now ready to run the code.
 
-## Loading Staging Tables
+## Step 3: Load data from S3
 
-- Loading the staging tables with the json data from S3 bucket. General syntax:
+* Data can be loaded into spark system from input S3 buckets using
 
-        COPY staging_events FROM S3_Bucket_location
-        iam_role IAM_ARN
-        COMPUPDATE OFF region 'us-west-2'
-        json JSON_PATH
-        TRUNCATECOLUMNS BLANKSASNULL EMPTYASNULL;
-- COMPUPDATE OFF disables the compression computations which makes the data load faster into the table. This is optional.
-- json JSON_PATH provides the JSON Path file location to be used. JSON Path file contains JSONPath expression which is used to traverse the path to an element in the JSON structure. We can use `json 'auto'` to leave this on RedShift.
-- TRUNCATECOLUMNS BLANKSASNULL EMPTYASNULL converts blanks and empty values to NULLS in table. This is also optional.
+        df = spark.read.json(path)
 
-## Loading Dimension and Fact Tables
+## Step 4: Transform & Load Data
 
-### 1. Songs Table
-- SELECTing distinct song_id, title, artist_id,year and duration FROM staging_songs and INSERTing in songs table.
+* Transform song data to get desired columns for songs and artist tables. Write these tables to parquet using
 
-        SELECT
-            distinct song_id,
-            title,
-            artist_id,
-            year,
-            duration
-        FROM
-            staging_songs;
+        table_name.write.mode('overwrite').partitionBy(partion_columns).parquet(output_path)
 
+* Transform log data to get desired columns for time and user tables. Write these tables to parquet files.
+* Read the song table from output bucket and join with log data to get all the data required for songplays table. Use `monotonically_increasing_id()` to generate songplay_id (We can also define a UDF for it).
+* Select desired columns from joined table and write songplays table to parquet file.
 
-### 2. Artists Table
-- SELECT distinct artist_id, artist_name, artist_location, artist_latitude and artist_longitude FROM staging_songs and INSERTing in artists table.
-
-        SELECT
-            distinct artist_id,
-            artist_name,
-            artist_location,
-            artist_latitude,
-            artist_longitude
-        FROM
-            staging_songs
-        WHERE 
-            artist_id IS NOT NULL;
-
-### 3. Users Table
-- The below query fetches the required user details from staging events. Only the most recent user details are being used in order to capture latest level of user whether it is free or paid.
-
-        SELECT
-            distinct user_id,
-            first_name,
-            last_name,
-            gender,
-            level
-        FROM 
-            staging_events
-        WHERE
-            user_id IS NOT NULL
-        ORDER BY
-            ts DESC;
-
-### 4. Time Table
-- Inserting the data we get from staging_events table with the below query:
-
-        SELECT
-            distinct timestamp 'epoch' + ts/1000 * interval '1 second' AS start,
-            EXTRACT(hour FROM start),
-            EXTRACT(day FROM start),
-            EXTRACT(week FROM start),
-            EXTRACT(month FROM start),
-            EXTRACT(year FROM start),
-            EXTRACT(weekday FROM start)
-        FROM
-            staging_events
-        WHERE ts IS NOT NULL;
-- There are multiple ways to get datetime from timestamp in milliseconds. Using `timestamp 'epoch' + ts/1000 * interval '1 second'` is the most efficient one.
-
-### 5. Songplays Table
-The below query retrieves the required data:
-
-    SELECT
-        timestamp 'epoch' + se.ts/1000 * interval '1 second',
-        se.user_id,
-        se.level,
-        s.song_id,
-        s.artist_id,
-        se.location,
-        se.sessionId,
-        se.useragent
-    FROM
-        staging_events se
-        LEFT JOIN songs s ON s.title = se.song and s.duration = se.length
-    WHERE
-        se.page = 'NextSong';
-
-- We are inserting only records with page = NextSong
-- JOINING songs and stagin_events Tables to get song_id and artist_id. Joining these two is fast since, songs table is distributed in ALL style.
